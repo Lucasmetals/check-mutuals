@@ -205,33 +205,51 @@ def ensure_playwright():
     return sync_playwright, PlaywrightTimeoutError
 
 
+def page_needs_login(page: Any) -> bool:
+    page.wait_for_timeout(1000)
+    if "/accounts/login" in page.url:
+        return True
+
+    login_fields = page.locator("input[name='username'], input[name='password']").count()
+    login_text = page.get_by_text("Log in to Instagram", exact=True).count()
+    return login_fields > 0 or login_text > 0
+
+
 def wait_for_login_if_needed(page: Any, username: str) -> None:
-    if "/accounts/login" not in page.url:
+    print(f"Current page: {page.url}")
+    if not page_needs_login(page):
+        print("Login state: already authenticated.")
         return
 
-    print("Instagram needs you to log in.")
-    print("Use the browser window that opened, then come back here and press Enter.")
-    input()
-    page.goto(f"https://www.instagram.com/{username}/", wait_until="domcontentloaded")
+    while page_needs_login(page):
+        print("Login state: Instagram is asking for login.")
+        print("Log in in the browser window, then come back here and press Enter.")
+        input()
+        page.goto(f"https://www.instagram.com/{username}/", wait_until="domcontentloaded")
+        print(f"Current page after login check: {page.url}")
 
 
 def open_relationship_dialog(page: Any, username: str, relationship: str, timeout_ms: int) -> None:
+    page.goto(f"https://www.instagram.com/{username}/", wait_until="domcontentloaded")
+    wait_for_login_if_needed(page, username)
+    if page_needs_login(page):
+        raise RuntimeError("Cannot open relationship list while Instagram is still asking for login.")
+
+    try:
+        page.locator(f"a[href='/{username}/{relationship}/']").first.click(timeout=timeout_ms)
+        page.locator("div[role='dialog']").last.wait_for(timeout=timeout_ms)
+        print(f"Opened {relationship} dialog.")
+        return
+    except Exception as click_error:
+        print(f"Could not open {relationship} from profile link: {click_error!r}")
+
     page.goto(
         f"https://www.instagram.com/{username}/{relationship}/",
         wait_until="domcontentloaded",
     )
     wait_for_login_if_needed(page, username)
-
-    try:
-        page.locator("div[role='dialog']").last.wait_for(timeout=timeout_ms)
-        return
-    except Exception:
-        pass
-
-    page.goto(f"https://www.instagram.com/{username}/", wait_until="domcontentloaded")
-    wait_for_login_if_needed(page, username)
-    page.locator(f"a[href='/{username}/{relationship}/']").first.click(timeout=timeout_ms)
     page.locator("div[role='dialog']").last.wait_for(timeout=timeout_ms)
+    print(f"Opened {relationship} dialog from direct URL.")
 
 
 def dialog_usernames(page: Any) -> set[str]:
@@ -278,6 +296,8 @@ def scrape_relationship(
 ) -> set[str]:
     print(f"Opening {relationship} list...")
     open_relationship_dialog(page, username, relationship, timeout_ms)
+    if page_needs_login(page):
+        raise RuntimeError("Instagram returned to the login page before scraping could start.")
 
     usernames: set[str] = set()
     idle_scrolls = 0
