@@ -13,7 +13,7 @@ Examples:
   python instagram_non_mutuals.py --followers followers_1.json --following following.json
   python instagram_non_mutuals.py --export-dir instagram-export/followers_and_following
   python instagram_non_mutuals.py --export-dir instagram-export --csv non_mutuals.csv
-  python instagram_non_mutuals.py --browser your_username
+  python instagram_non_mutuals.py
 """
 
 from __future__ import annotations
@@ -497,15 +497,10 @@ def parse_args() -> argparse.Namespace:
         help="Instagram export directory. The script will auto-detect follower/following files.",
     )
     parser.add_argument(
-        "--browser",
-        metavar="USERNAME",
-        help="Use a persistent browser session to scrape followers/following for this account.",
-    )
-    parser.add_argument(
         "--browser-profile",
         type=Path,
         default=Path(".instagram_browser_profile"),
-        help="Directory for the saved browser session used by --browser.",
+        help="Directory for the saved browser session used by interactive browser mode.",
     )
     parser.add_argument(
         "--timeout",
@@ -539,8 +534,25 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
 
-    if args.browser:
-        username = args.browser.strip().lstrip("@").lower()
+    if args.export_dir:
+        followers_path = args.followers or find_export_file(
+            args.export_dir,
+            ["followers_*.json", "followers.json", "followers_*.html", "followers.html"],
+        )
+        following_path = args.following or find_export_file(
+            args.export_dir,
+            ["following.json", "following.html"],
+        )
+    elif args.followers or args.following:
+        if not args.followers or not args.following:
+            raise SystemExit("Provide both --followers and --following.")
+        followers_path = args.followers
+        following_path = args.following
+    else:
+        username = input("Instagram username to check: ").strip().lstrip("@").lower()
+        if not username:
+            raise SystemExit("Username is required.")
+
         followers, following = scrape_with_browser(
             username,
             args.browser_profile,
@@ -557,21 +569,6 @@ def main() -> int:
             args.csv,
         )
         return 0
-
-    if args.export_dir:
-        followers_path = args.followers or find_export_file(
-            args.export_dir,
-            ["followers_*.json", "followers.json", "followers_*.html", "followers.html"],
-        )
-        following_path = args.following or find_export_file(
-            args.export_dir,
-            ["following.json", "following.html"],
-        )
-    else:
-        if not args.followers or not args.following:
-            raise SystemExit("Provide --export-dir or both --followers and --following.")
-        followers_path = args.followers
-        following_path = args.following
 
     followers = load_usernames(followers_path)
     following = load_usernames(following_path)
