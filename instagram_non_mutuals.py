@@ -240,9 +240,17 @@ def page_needs_login(page: Any) -> bool:
     )
 
 
-def prepare_browser_session(page: Any, username: str) -> None:
+def prepare_browser_session(page: Any, username: str, pause_before_scrape: bool) -> None:
     print("Preparing browser session...")
     page.goto(f"https://www.instagram.com/{username}/", wait_until="domcontentloaded")
+    print_login_diagnostics(page)
+
+    if pause_before_scrape:
+        print("The browser is open on the Instagram profile.")
+        print("Log in if needed, close any popups, and make sure the profile page is visible.")
+        input("Press Enter here to start scraping followers/following...")
+        page.goto(f"https://www.instagram.com/{username}/", wait_until="domcontentloaded")
+        print_login_diagnostics(page)
 
     while page_needs_login(page):
         print_login_diagnostics(page)
@@ -367,6 +375,7 @@ def scrape_with_browser(
     timeout_ms: int,
     scroll_wait_seconds: float,
     max_idle_scrolls: int,
+    pause_before_scrape: bool,
 ) -> tuple[set[str], set[str]]:
     sync_playwright, _ = ensure_playwright()
     profile_dir.mkdir(parents=True, exist_ok=True)
@@ -380,7 +389,7 @@ def scrape_with_browser(
         page = context.pages[0] if context.pages else context.new_page()
 
         try:
-            prepare_browser_session(page, username)
+            prepare_browser_session(page, username, pause_before_scrape)
             followers = scrape_relationship(
                 page,
                 username,
@@ -441,6 +450,11 @@ def parse_args() -> argparse.Namespace:
         default=5,
         help="Stop browser scraping after this many scrolls without new accounts.",
     )
+    parser.add_argument(
+        "--no-login-pause",
+        action="store_true",
+        help="Do not pause before scraping in browser mode.",
+    )
     parser.add_argument("--followers", type=Path, help="Path to followers_1.json/html.")
     parser.add_argument("--following", type=Path, help="Path to following.json/html.")
     parser.add_argument("--csv", type=Path, help="Optional output CSV path.")
@@ -458,6 +472,7 @@ def main() -> int:
             args.timeout,
             args.scroll_wait,
             args.max_idle_scrolls,
+            not args.no_login_pause,
         )
         print_results(
             f"Instagram browser session for @{username}",
