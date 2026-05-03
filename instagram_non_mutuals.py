@@ -147,15 +147,13 @@ def find_export_file(export_dir: Path, patterns: list[str]) -> Path:
     return sorted(matches, key=lambda item: len(item.parts))[0]
 
 
-def write_csv(path: Path, not_following_back: list[str], you_do_not_follow_back: list[str]) -> None:
+def write_csv(path: Path, not_following_back: list[str]) -> None:
     with path.open("w", newline="", encoding="utf-8") as file:
         writer = csv.writer(file)
-        writer.writerow(["type", "username"])
+        writer.writerow(["username"])
 
         for username in not_following_back:
-            writer.writerow(["not_following_you_back", username])
-        for username in you_do_not_follow_back:
-            writer.writerow(["you_do_not_follow_back", username])
+            writer.writerow([username])
 
 
 def print_results(
@@ -166,7 +164,6 @@ def print_results(
     csv_path: Path | None,
 ) -> None:
     not_following_back = sorted(following - followers)
-    you_do_not_follow_back = sorted(followers - following)
 
     print(f"Followers source: {followers_label}")
     print(f"Following source: {following_label}")
@@ -178,13 +175,8 @@ def print_results(
     for username in not_following_back:
         print(f"  {username}")
 
-    print()
-    print(f"Accounts following you that you do not follow back ({len(you_do_not_follow_back)}):")
-    for username in you_do_not_follow_back:
-        print(f"  {username}")
-
     if csv_path:
-        write_csv(csv_path, not_following_back, you_do_not_follow_back)
+        write_csv(csv_path, not_following_back)
         print()
         print(f"Wrote CSV: {csv_path}")
 
