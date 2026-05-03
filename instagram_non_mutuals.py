@@ -205,14 +205,54 @@ def ensure_playwright():
     return sync_playwright, PlaywrightTimeoutError
 
 
-def page_needs_login(page: Any) -> bool:
+def login_diagnostics(page: Any) -> dict[str, int | str]:
     page.wait_for_timeout(1000)
-    if "/accounts/login" in page.url:
-        return True
+    return {
+        "url": page.url,
+        "login_url": int("/accounts/login" in page.url),
+        "login_fields": page.locator("input[name='username'], input[name='password']").count(),
+        "login_text": page.get_by_text("Log in to Instagram", exact=True).count(),
+        "auth_wall": page.get_by_text("See photos, videos and more", exact=False).count(),
+        "signup_buttons": page.get_by_role("button", name="Sign up").count(),
+        "login_links": page.get_by_role("link", name="Log in").count(),
+    }
 
-    login_fields = page.locator("input[name='username'], input[name='password']").count()
-    login_text = page.get_by_text("Log in to Instagram", exact=True).count()
-    return login_fields > 0 or login_text > 0
+
+def print_login_diagnostics(page: Any) -> None:
+    diagnostics = login_diagnostics(page)
+    print(
+        "Login diagnostics: "
+        f"url={diagnostics['url']!r}, "
+        f"login_url={diagnostics['login_url']}, "
+        f"login_fields={diagnostics['login_fields']}, "
+        f"login_text={diagnostics['login_text']}, "
+        f"auth_wall={diagnostics['auth_wall']}, "
+        f"signup_buttons={diagnostics['signup_buttons']}, "
+        f"login_links={diagnostics['login_links']}"
+    )
+
+
+def page_needs_login(page: Any) -> bool:
+    diagnostics = login_diagnostics(page)
+    return any(
+        int(diagnostics[key]) > 0
+        for key in ("login_url", "login_fields", "login_text", "auth_wall", "signup_buttons")
+    )
+
+
+def prepare_browser_session(page: Any, username: str) -> None:
+    print("Preparing browser session...")
+    page.goto(f"https://www.instagram.com/{username}/", wait_until="domcontentloaded")
+
+    while page_needs_login(page):
+        print_login_diagnostics(page)
+        print("Instagram is not showing a logged-in session yet.")
+        print("Use the browser window to log in. If you see the sign-up wall, click 'Log in'.")
+        input("Press Enter here after the profile is visible while logged in...")
+        page.goto(f"https://www.instagram.com/{username}/", wait_until="domcontentloaded")
+
+    print_login_diagnostics(page)
+    print("Login state: ready to scrape.")
 
 
 def wait_for_login_if_needed(page: Any, username: str) -> None:
@@ -222,6 +262,7 @@ def wait_for_login_if_needed(page: Any, username: str) -> None:
         return
 
     while page_needs_login(page):
+        print_login_diagnostics(page)
         print("Login state: Instagram is asking for login.")
         print("Log in in the browser window, then come back here and press Enter.")
         input()
@@ -339,6 +380,7 @@ def scrape_with_browser(
         page = context.pages[0] if context.pages else context.new_page()
 
         try:
+            prepare_browser_session(page, username)
             followers = scrape_relationship(
                 page,
                 username,
