@@ -24,6 +24,7 @@ import json
 import re
 import sys
 import time
+from urllib.parse import urlencode
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any, Iterable
@@ -263,6 +264,98 @@ def prepare_browser_session(page: Any, username: str, pause_before_scrape: bool)
     print("Login state: ready to scrape.")
 
 
+def get_profile_user_id(page: Any, username: str, timeout_ms: int) -> str:
+    response = page.context.request.get(
+        f"https://www.instagram.com/api/v1/users/web_profile_info/?username={username}",
+        headers={
+            "x-ig-app-id": "936619743392459",
+            "x-requested-with": "XMLHttpRequest",
+        },
+        timeout=timeout_ms,
+    )
+
+    if response.ok:
+        data = response.json()
+        user_id = data.get("data", {}).get("user", {}).get("id")
+        if user_id:
+            return str(user_id)
+
+    page.goto(f"https://www.instagram.com/{username}/", wait_until="domcontentloaded")
+    content = page.content()
+    patterns = [
+        rf'"id"\s*:\s*"(\d+)"\s*,\s*"username"\s*:\s*"{re.escape(username)}"',
+        rf'"profile_id"\s*:\s*"(\d+)"',
+        rf'"user_id"\s*:\s*"(\d+)"',
+    ]
+
+    for pattern in patterns:
+        match = re.search(pattern, content)
+        if match:
+            return match.group(1)
+
+    raise RuntimeError(f"Could not find Instagram user id for @{username}.")
+
+
+def instagram_api_get(page: Any, path: str, params: dict[str, str], timeout_ms: int) -> dict[str, Any]:
+    query = urlencode(params)
+    response = page.context.request.get(
+        f"https://www.instagram.com{path}?{query}",
+        headers={
+            "x-ig-app-id": "936619743392459",
+            "x-requested-with": "XMLHttpRequest",
+        },
+        timeout=timeout_ms,
+    )
+
+    if not response.ok:
+        raise RuntimeError(f"Instagram API request failed: HTTP {response.status} {path}")
+
+    return response.json()
+
+
+def fetch_relationship_api(
+    page: Any,
+    user_id: str,
+    relationship: str,
+    timeout_ms: int,
+) -> set[str]:
+    usernames: set[str] = set()
+    max_id: str | None = None
+    page_number = 1
+
+    while True:
+        params = {
+            "count": "200",
+            "search_surface": "follow_list_page",
+        }
+        if max_id:
+            params["max_id"] = max_id
+
+        data = instagram_api_get(
+            page,
+            f"/api/v1/friendships/{user_id}/{relationship}/",
+            params,
+            timeout_ms,
+        )
+
+        users = data.get("users", [])
+        for user in users:
+            username = user.get("username")
+            if isinstance(username, str) and username:
+                usernames.add(username.lower())
+
+        print(f"  API page {page_number}: collected {len(usernames)} {relationship}.")
+
+        max_id = data.get("next_max_id")
+        if not max_id:
+            break
+
+        page_number += 1
+        time.sleep(1)
+
+    return usernames
+
+
 def wait_for_login_if_needed(page: Any, username: str) -> None:
     print(f"Current page: {page.url}")
     if not page_needs_login(page):
@@ -390,22 +483,12 @@ def scrape_with_browser(
 
         try:
             prepare_browser_session(page, username, pause_before_scrape)
-            followers = scrape_relationship(
-                page,
-                username,
-                "followers",
-                timeout_ms,
-                scroll_wait_seconds,
-                max_idle_scrolls,
-            )
-            following = scrape_relationship(
-                page,
-                username,
-                "following",
-                timeout_ms,
-                scroll_wait_seconds,
-                max_idle_scrolls,
-            )
+            user_id = get_profile_user_id(page, username, timeout_ms)
+            print(f"Instagram user id for @{username}: {user_id}")
+            print("Fetching followers via authenticated Instagram API...")
+            followers = fetch_relationship_api(page, user_id, "followers", timeout_ms)
+            print("Fetching following via authenticated Instagram API...")
+            following = fetch_relationship_api(page, user_id, "following", timeout_ms)
         finally:
             context.close()
 
